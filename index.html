@@ -15,7 +15,8 @@
       --text-dark: #212529;
       --text-light: #ffffff;
       --subtext: #6c757d;
-      --error-color: #d9534f;
+      --error-color: #721c24;
+      --error-bg: #f8d7da;
     }
 
     * {
@@ -43,16 +44,8 @@
       text-align: center;
     }
 
-    header h1 {
-      font-size: 1.2rem;
-      font-weight: 600;
-    }
-
-    header p {
-      font-size: 0.8rem;
-      opacity: 0.9;
-      margin-top: 2px;
-    }
+    header h1 { font-size: 1.2rem; font-weight: 600; }
+    header p { font-size: 0.8rem; opacity: 0.9; margin-top: 2px; }
 
     #chat-window {
       flex: 1;
@@ -66,18 +59,11 @@
     .bubble-container {
       display: flex;
       flex-direction: column;
-      max-width: 80%;
+      max-width: 85%;
     }
 
-    .bubble-container.user {
-      align-self: flex-end;
-      align-items: flex-end;
-    }
-
-    .bubble-container.bot {
-      align-self: flex-start;
-      align-items: flex-start;
-    }
+    .bubble-container.user { align-self: flex-end; align-items: flex-end; }
+    .bubble-container.bot { align-self: flex-start; align-items: flex-start; }
 
     .bubble {
       padding: 12px 16px;
@@ -106,13 +92,10 @@
       padding: 0 4px;
     }
 
-    .thinking {
-      font-style: italic;
-      color: var(--subtext);
-    }
+    .thinking { font-style: italic; color: var(--subtext); }
 
     .error-bubble {
-      background-color: #f8d7da !important;
+      background-color: var(--error-bg) !important;
       color: var(--error-color) !important;
       border: 1px solid #f5c6cb;
     }
@@ -123,10 +106,7 @@
       border-top: 1px solid #ddd;
     }
 
-    #chat-form {
-      display: flex;
-      gap: 8px;
-    }
+    #chat-form { display: flex; gap: 8px; }
 
     input[type="text"] {
       flex: 1;
@@ -137,9 +117,7 @@
       outline: none;
     }
 
-    input[type="text"]:focus {
-      border-color: var(--primary);
-    }
+    input[type="text"]:focus { border-color: var(--primary); }
 
     button {
       background-color: var(--primary);
@@ -149,17 +127,9 @@
       border-radius: 24px;
       font-weight: bold;
       cursor: pointer;
-      transition: background-color 0.2s;
     }
 
-    button:hover {
-      background-color: var(--secondary);
-    }
-
-    button:disabled {
-      background-color: #ccc;
-      cursor: not-allowed;
-    }
+    button:disabled { background-color: #ccc; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -188,17 +158,112 @@
     const userInput = document.getElementById('user-input');
     const sendBtn = document.getElementById('send-btn');
 
-    // URLs dos Dados
     const SESSIONS_CSV_URL = 'https://bdaib-hub.pages.dev/data/dockside/sessions.csv';
     const WEATHER_API_URL = 'https://api.open-meteo.com/v1/forecast?latitude=53.3444&longitude=-6.2372&current=wind_speed_10m&timezone=Europe/Dublin';
     const RELAY_CHAT_URL = 'https://luas-class.kluxy.app/chat';
 
-    // Instruções do Robô (SYSTEM Prompt)
     const SYSTEM = `You are Ask Dockside, the customer assistant for Dockside Paddle Co. at Grand Canal Dock in Dublin.
-Answer strictly based on the live data provided to you (Today's Sessions CSV and Live Weather JSON).
+Answer strictly based on the live data provided (Sessions CSV and Weather JSON).
 Rules:
-1. Quote exact prices in euros (€) and exact places left when asked.
-2. For session safety and weather questions: compare the live wind speed from the weather JSON with the session's max_wind_kmh. Quote BOTH the live wind speed and the session's wind limit in your response, and explain if it is safe to proceed.
-3. If a service, item, or detail is not listed in the data (e.g., bike rentals, items not offered), state clearly that it is not available.
-4. If a value looks implausible (e.g., negative prices or slots), state that it appears incorrect and suggest checking with staff.
-5. Be
+1. Quote exact prices (€) and places left when asked.
+2. For safety/weather: compare live wind speed with session's max_wind_kmh. Quote BOTH numbers and explain if safe.
+3. If an item/service isn't in the data (e.g. bike rentals), state clearly it is not offered.
+4. If a value looks implausible (e.g. negative slots/prices), flag it as incorrect.
+5. Be concise and helpful.`;
+
+    function getFormattedTime() {
+      return new Date().toTimeString().split(' ')[0];
+    }
+
+    function appendMessage(role, text, isError = false) {
+      const container = document.createElement('div');
+      container.className = `bubble-container ${role}`;
+
+      const bubble = document.createElement('div');
+      bubble.className = `bubble ${isError ? 'error-bubble' : ''}`;
+      bubble.textContent = text;
+      container.appendChild(bubble);
+
+      if (role === 'bot' && !isError) {
+        const timeStamp = document.createElement('div');
+        timeStamp.className = 'timestamp';
+        timeStamp.textContent = `Data fetched live at ${getFormattedTime()}`;
+        container.appendChild(timeStamp);
+      }
+
+      chatWindow.appendChild(container);
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+      return container;
+    }
+
+    chatForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const question = userInput.value.trim();
+      if (!question) return;
+
+      appendMessage('user', question);
+      userInput.value = '';
+      sendBtn.disabled = true;
+
+      const thinkingBubble = appendMessage('bot', 'Thinking...');
+      thinkingBubble.querySelector('.bubble').classList.add('thinking');
+
+      try {
+        // 1. Fetch Planilha
+        const csvRes = await fetch(SESSIONS_CSV_URL);
+        if (!csvRes.ok) throw new Error(`CSV fetch failed: ${csvRes.status}`);
+        const csvData = await csvRes.text();
+
+        // 2. Fetch Clima
+        let weatherText = "Weather data unavailable";
+        try {
+          const wRes = await fetch(WEATHER_API_URL);
+          if (wRes.ok) {
+            const wJson = await wRes.json();
+            weatherText = JSON.stringify(wJson.current || {});
+          }
+        } catch (wErr) {
+          console.warn("Weather error:", wErr);
+        }
+
+        // 3. Enviar ao Relay
+        const payload = {
+          system: SYSTEM,
+          messages: [
+            {
+              role: "user",
+              content: `Today's sessions (CSV):\n${csvData}\n\nLive weather (JSON):\n${weatherText}\n\nCustomer question: ${question}`
+            }
+          ]
+        };
+
+        const chatRes = await fetch(RELAY_CHAT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!chatRes.ok) throw new Error(`Relay response error: ${chatRes.status}`);
+
+        const result = await chatRes.json();
+        chatWindow.removeChild(thinkingBubble);
+        
+        if (result.reply) {
+          appendMessage('bot', result.reply);
+        } else {
+          appendMessage('bot', 'Received empty reply from server.', true);
+        }
+
+      } catch (err) {
+        if (thinkingBubble.parentNode) {
+          chatWindow.removeChild(thinkingBubble);
+        }
+        appendMessage('bot', `Error: ${err.message}`, true);
+      } finally {
+        sendBtn.disabled = false;
+        userInput.focus();
+      }
+    });
+  </script>
+</body>
+</html>
